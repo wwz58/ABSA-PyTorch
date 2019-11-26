@@ -60,9 +60,11 @@ class Attention(nn.Module):
         # score: (n_head*?, q_len, k_len,)
         # output: (?, q_len, out_dim,)
         kx = self.w_k(k).view(mb_size, k_len, self.n_head, self.hidden_dim)
-        kx = kx.permute(2, 0, 1, 3).contiguous().view(-1, k_len, self.hidden_dim)
+        kx = kx.permute(2, 0, 1, 3).contiguous(
+        ).view(-1, k_len, self.hidden_dim)
         qx = self.w_q(q).view(mb_size, q_len, self.n_head, self.hidden_dim)
-        qx = qx.permute(2, 0, 1, 3).contiguous().view(-1, q_len, self.hidden_dim)
+        qx = qx.permute(2, 0, 1, 3).contiguous(
+        ).view(-1, q_len, self.hidden_dim)
         if self.score_function == 'dot_product':
             kt = kx.permute(0, 2, 1)
             score = torch.bmm(qx, kt)
@@ -73,7 +75,8 @@ class Attention(nn.Module):
         elif self.score_function == 'mlp':
             kxx = torch.unsqueeze(kx, dim=1).expand(-1, q_len, -1, -1)
             qxx = torch.unsqueeze(qx, dim=2).expand(-1, -1, k_len, -1)
-            kq = torch.cat((kxx, qxx), dim=-1)  # (n_head*?, q_len, k_len, hidden_dim*2)
+            # (n_head*?, q_len, k_len, hidden_dim*2)
+            kq = torch.cat((kxx, qxx), dim=-1)
             # kq = torch.unsqueeze(kx, dim=1) + torch.unsqueeze(qx, dim=2)
             score = F.tanh(torch.matmul(kq, self.weight))
         elif self.score_function == 'bi_linear':
@@ -84,16 +87,21 @@ class Attention(nn.Module):
             raise RuntimeError('invalid score_function')
         score = F.softmax(score, dim=-1)
         output = torch.bmm(score, kx)  # (n_head*?, q_len, hidden_dim)
-        output = torch.cat(torch.split(output, mb_size, dim=0), dim=-1)  # (?, q_len, n_head*hidden_dim)
+        # (?, q_len, n_head*hidden_dim)
+        output = torch.cat(torch.split(output, mb_size, dim=0), dim=-1)
         output = self.proj(output)  # (?, q_len, out_dim)
         output = self.dropout(output)
-        return output, score
+        # output: (?, q_len, out_dim)
+        # att score: (?, n_head, q_len, k_len)
+        return {'output': output, 'att_score': score.view(self.n_head, mb_size, q_len, k_len).transpose(0, 1)}
 
 
 class NoQueryAttention(Attention):
     '''q is a parameter'''
+
     def __init__(self, embed_dim, hidden_dim=None, out_dim=None, n_head=1, score_function='dot_product', q_len=1, dropout=0):
-        super(NoQueryAttention, self).__init__(embed_dim, hidden_dim, out_dim, n_head, score_function, dropout)
+        super(NoQueryAttention, self).__init__(
+            embed_dim, hidden_dim, out_dim, n_head, score_function, dropout)
         self.q_len = q_len
         self.q = nn.Parameter(torch.Tensor(q_len, embed_dim))
         self.reset_q()
